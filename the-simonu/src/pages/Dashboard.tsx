@@ -1,14 +1,175 @@
+import { useEffect, useState } from 'react'
 import {
   Activity,
   Clock3,
   Users,
 } from 'lucide-react'
 
+import { supabase } from '../lib/supabase'
+
 import StatCard from '../components/StatCard'
 import Ranking from '../components/Ranking'
 import HighlightCard from '../components/HighlightCard'
 
+interface Simulation {
+  id: string
+  name: string
+  year: number
+  description: string | null
+  status: string
+}
+
+interface Committee {
+  id: string
+  name: string
+  type: string
+  description: string | null
+  status: string
+}
+
+interface Session {
+  id: string
+  committee_id: string
+  number: number
+  status: string
+  started_at: string | null
+  ended_at: string | null
+}
+
 function Dashboard() {
+  const [simulation, setSimulation] =
+    useState<Simulation | null>(null)
+
+  const [committee, setCommittee] =
+    useState<Committee | null>(null)
+
+  const [session, setSession] =
+    useState<Session | null>(null)
+
+  const [totalSessions, setTotalSessions] =
+    useState<number>(0)
+
+  const [totalDelegates, setTotalDelegates] =
+    useState<number>(0)
+
+  useEffect(() => {
+    async function loadData() {
+      // =====================================================
+      // BUSCAR SIMULAÇÃO
+      // =====================================================
+
+      const {
+        data: simulationData,
+        error: simulationError,
+      } = await supabase
+        .from('simulations')
+        .select('*')
+        .eq('name', 'THE SIMONU 2027')
+        .single()
+
+      if (simulationError) {
+        console.error(
+          'Erro ao carregar simulação:',
+          simulationError
+        )
+      }
+
+      if (simulationData) {
+        setSimulation(simulationData)
+      }
+
+      // =====================================================
+      // BUSCAR COMITÊ
+      // =====================================================
+
+      const {
+        data: committeeData,
+        error: committeeError,
+      } = await supabase
+        .from('committees')
+        .select('*')
+        .eq('name', 'Invasão Americana no Irã')
+        .single()
+
+      if (committeeError) {
+        console.error(
+          'Erro ao carregar comitê:',
+          committeeError
+        )
+      }
+
+      if (committeeData) {
+        setCommittee(committeeData)
+
+        // ===================================================
+        // BUSCAR SESSÕES DO COMITÊ
+        // ===================================================
+
+        const {
+          data: sessionsData,
+          error: sessionsError,
+        } = await supabase
+          .from('sessions')
+          .select('*')
+          .eq('committee_id', committeeData.id)
+          .order('number', { ascending: true })
+
+        if (sessionsError) {
+          console.error(
+            'Erro ao carregar sessões:',
+            sessionsError
+          )
+        }
+
+        if (sessionsData) {
+          setTotalSessions(sessionsData.length)
+
+          const currentSession =
+            sessionsData.find(
+              (item) => item.status === 'LIVE'
+            )
+
+          if (currentSession) {
+            setSession(currentSession)
+          }
+        }
+
+        // ===================================================
+        // BUSCAR PARTICIPANTES DO COMITÊ
+        // ===================================================
+
+        const {
+          data: participationsData,
+          error: participationsError,
+        } = await supabase
+          .from('participations')
+          .select('id')
+          .eq('committee_id', committeeData.id)
+
+        if (participationsError) {
+          console.error(
+            'Erro ao carregar participantes:',
+            participationsError
+          )
+        }
+
+        if (participationsData) {
+          setTotalDelegates(
+            participationsData.length
+          )
+        }
+      }
+    }
+
+    loadData()
+  }, [])
+
+  const sessionDisplay = session
+    ? `${String(session.number).padStart(2, '0')} / ${String(
+        totalSessions
+      ).padStart(2, '0')}`
+    : '...'
+
   return (
     <main className="dashboard">
 
@@ -16,22 +177,34 @@ function Dashboard() {
 
       <header className="dashboard-header">
         <div>
+
           <div className="live-status">
             <span className="live-dot" />
             AO VIVO
           </div>
 
-          <h1>THE SIMONU</h1>
+          <h1>
+            {simulation?.name ?? 'Carregando...'}
+          </h1>
 
           <p>
-            Teatro de Operações - Invasão Americana no Irã · 2027
+            {committee
+              ? `${committee.type === 'TO'
+                  ? 'Teatro de Operações'
+                  : 'Debate'} - ${committee.name} · ${simulation?.year ?? '...'}`
+              : 'Carregando comitê...'}
           </p>
+
         </div>
 
         <div className="session-indicator">
           <span>SESSÃO</span>
-          <strong>01 / 05</strong>
+
+          <strong>
+            {sessionDisplay}
+          </strong>
         </div>
+
       </header>
 
 
@@ -41,8 +214,12 @@ function Dashboard() {
 
         <StatCard
           title="SESSÃO"
-          value="01 / 05"
-          description="Em andamento"
+          value={sessionDisplay}
+          description={
+            session?.status === 'LIVE'
+              ? 'Em andamento'
+              : 'Aguardando'
+          }
           icon={Activity}
         />
 
@@ -55,7 +232,7 @@ function Dashboard() {
 
         <StatCard
           title="DELEGADOS"
-          value="24"
+          value={String(totalDelegates)}
           description="Participando agora"
           icon={Users}
         />
@@ -80,11 +257,15 @@ function Dashboard() {
 
         <div className="section-header">
           <div>
+
             <span className="section-label">
               ATIVIDADE
             </span>
 
-            <h2>Eventos recentes</h2>
+            <h2>
+              Eventos recentes
+            </h2>
+
           </div>
         </div>
 
@@ -92,6 +273,7 @@ function Dashboard() {
 
           <div className="event">
             <span>17:42</span>
+
             <p>
               Delegado A respondeu à crise.
             </p>
@@ -99,6 +281,7 @@ function Dashboard() {
 
           <div className="event">
             <span>17:40</span>
+
             <p>
               Delegado C enviou uma nova ordem.
             </p>
@@ -106,6 +289,7 @@ function Dashboard() {
 
           <div className="event">
             <span>17:38</span>
+
             <p>
               Delegado B iniciou uma negociação.
             </p>
