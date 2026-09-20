@@ -69,6 +69,14 @@ function Dashboard() {
   const [events, setEvents] =
     useState<Event[]>([])
 
+  const [elapsedTime, setElapsedTime] =
+    useState('00:00:00')
+
+
+  // =========================================================
+  // BUSCAR DADOS
+  // =========================================================
+
   useEffect(() => {
     async function loadData() {
 
@@ -96,6 +104,7 @@ function Dashboard() {
         setSimulation(simulationData)
       }
 
+
       // =====================================================
       // BUSCAR COMITÊ
       // =====================================================
@@ -122,6 +131,7 @@ function Dashboard() {
 
       setCommittee(committeeData)
 
+
       // =====================================================
       // BUSCAR SESSÕES
       // =====================================================
@@ -132,7 +142,10 @@ function Dashboard() {
       } = await supabase
         .from('sessions')
         .select('*')
-        .eq('committee_id', committeeData.id)
+        .eq(
+          'committee_id',
+          committeeData.id
+        )
         .order('number', {
           ascending: true,
         })
@@ -145,6 +158,7 @@ function Dashboard() {
       }
 
       if (sessionsData) {
+
         setTotalSessions(
           sessionsData.length
         )
@@ -159,6 +173,7 @@ function Dashboard() {
           setSession(currentSession)
         }
       }
+
 
       // =====================================================
       // BUSCAR PARTICIPANTES
@@ -187,6 +202,7 @@ function Dashboard() {
           participationsData.length
         )
       }
+
 
       // =====================================================
       // BUSCAR EVENTOS
@@ -240,11 +256,90 @@ function Dashboard() {
     loadData()
   }, [])
 
+
+  // =========================================================
+  // CRONÔMETRO DA SESSÃO
+  // =========================================================
+
+  useEffect(() => {
+
+    if (!session?.started_at) {
+      setElapsedTime('00:00:00')
+      return
+    }
+
+    function updateElapsedTime() {
+
+      const start =
+        new Date(
+          session!.started_at!
+        ).getTime()
+
+      const now =
+        new Date().getTime()
+
+      const difference =
+        Math.max(
+          0,
+          now - start
+        )
+
+      const totalSeconds =
+        Math.floor(
+          difference / 1000
+        )
+
+      const hours =
+        Math.floor(
+          totalSeconds / 3600
+        )
+
+      const minutes =
+        Math.floor(
+          (totalSeconds % 3600) / 60
+        )
+
+      const seconds =
+        totalSeconds % 60
+
+      setElapsedTime(
+        `${String(hours).padStart(2, '0')}:${String(
+          minutes
+        ).padStart(2, '0')}:${String(
+          seconds
+        ).padStart(2, '0')}`
+      )
+    }
+
+    updateElapsedTime()
+
+    const interval =
+      setInterval(
+        updateElapsedTime,
+        1000
+      )
+
+    return () => {
+      clearInterval(interval)
+    }
+
+  }, [session])
+
+
+  // =========================================================
+  // SESSÃO
+  // =========================================================
+
   const sessionDisplay = session
     ? `${String(session.number).padStart(2, '0')} / ${String(
         totalSessions
       ).padStart(2, '0')}`
     : '...'
+
+
+  // =========================================================
+  // RENDER
+  // =========================================================
 
   return (
     <main className="dashboard">
@@ -258,8 +353,11 @@ function Dashboard() {
         <div>
 
           <div className="live-status">
+
             <span className="live-dot" />
+
             AO VIVO
+
           </div>
 
           <h1>
@@ -275,6 +373,7 @@ function Dashboard() {
           </p>
 
         </div>
+
 
         <div className="session-indicator">
 
@@ -310,7 +409,7 @@ function Dashboard() {
 
         <StatCard
           title="TEMPO"
-          value="01:24:32"
+          value={elapsedTime}
           description="Sessão atual"
           icon={Clock3}
         />
@@ -360,9 +459,11 @@ function Dashboard() {
 
         </div>
 
+
         <div className="event-list">
 
           {events.length === 0 && (
+
             <div className="event">
 
               <p>
@@ -370,7 +471,9 @@ function Dashboard() {
               </p>
 
             </div>
+
           )}
+
 
           {events.map((event) => {
 
@@ -386,6 +489,7 @@ function Dashboard() {
               )
 
             return (
+
               <div
                 className="event"
                 key={event.id}
@@ -398,10 +502,12 @@ function Dashboard() {
                 <p>
 
                   {event.participation?.delegate && (
+
                     <strong>
                       {event.participation.delegate.name}
                       {' — '}
                     </strong>
+
                   )}
 
                   {event.title}
@@ -409,6 +515,7 @@ function Dashboard() {
                 </p>
 
               </div>
+
             )
           })}
 
