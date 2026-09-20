@@ -36,6 +36,20 @@ interface Session {
   ended_at: string | null
 }
 
+interface Event {
+  id: string
+  type: string
+  title: string
+  description: string | null
+  created_at: string
+  participation: {
+    representation: string
+    delegate: {
+      name: string
+    }
+  } | null
+}
+
 function Dashboard() {
   const [simulation, setSimulation] =
     useState<Simulation | null>(null)
@@ -52,8 +66,12 @@ function Dashboard() {
   const [totalDelegates, setTotalDelegates] =
     useState<number>(0)
 
+  const [events, setEvents] =
+    useState<Event[]>([])
+
   useEffect(() => {
     async function loadData() {
+
       // =====================================================
       // BUSCAR SIMULAÇÃO
       // =====================================================
@@ -98,66 +116,124 @@ function Dashboard() {
         )
       }
 
-      if (committeeData) {
-        setCommittee(committeeData)
+      if (!committeeData) {
+        return
+      }
 
-        // ===================================================
-        // BUSCAR SESSÕES DO COMITÊ
-        // ===================================================
+      setCommittee(committeeData)
 
-        const {
-          data: sessionsData,
-          error: sessionsError,
-        } = await supabase
-          .from('sessions')
-          .select('*')
-          .eq('committee_id', committeeData.id)
-          .order('number', { ascending: true })
+      // =====================================================
+      // BUSCAR SESSÕES
+      // =====================================================
 
-        if (sessionsError) {
-          console.error(
-            'Erro ao carregar sessões:',
-            sessionsError
+      const {
+        data: sessionsData,
+        error: sessionsError,
+      } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('committee_id', committeeData.id)
+        .order('number', {
+          ascending: true,
+        })
+
+      if (sessionsError) {
+        console.error(
+          'Erro ao carregar sessões:',
+          sessionsError
+        )
+      }
+
+      if (sessionsData) {
+        setTotalSessions(
+          sessionsData.length
+        )
+
+        const currentSession =
+          sessionsData.find(
+            (item) =>
+              item.status === 'LIVE'
           )
+
+        if (currentSession) {
+          setSession(currentSession)
         }
+      }
 
-        if (sessionsData) {
-          setTotalSessions(sessionsData.length)
+      // =====================================================
+      // BUSCAR PARTICIPANTES
+      // =====================================================
 
-          const currentSession =
-            sessionsData.find(
-              (item) => item.status === 'LIVE'
+      const {
+        data: participationsData,
+        error: participationsError,
+      } = await supabase
+        .from('participations')
+        .select('id')
+        .eq(
+          'committee_id',
+          committeeData.id
+        )
+
+      if (participationsError) {
+        console.error(
+          'Erro ao carregar participantes:',
+          participationsError
+        )
+      }
+
+      if (participationsData) {
+        setTotalDelegates(
+          participationsData.length
+        )
+      }
+
+      // =====================================================
+      // BUSCAR EVENTOS
+      // =====================================================
+
+      const {
+        data: eventsData,
+        error: eventsError,
+      } = await supabase
+        .from('events')
+        .select(`
+          id,
+          type,
+          title,
+          description,
+          created_at,
+          participation:participation_id (
+            representation,
+            delegate:delegate_id (
+              name
             )
-
-          if (currentSession) {
-            setSession(currentSession)
-          }
-        }
-
-        // ===================================================
-        // BUSCAR PARTICIPANTES DO COMITÊ
-        // ===================================================
-
-        const {
-          data: participationsData,
-          error: participationsError,
-        } = await supabase
-          .from('participations')
-          .select('id')
-          .eq('committee_id', committeeData.id)
-
-        if (participationsError) {
-          console.error(
-            'Erro ao carregar participantes:',
-            participationsError
           )
-        }
+        `)
+        .eq(
+          'committee_id',
+          committeeData.id
+        )
+        .eq(
+          'is_public',
+          true
+        )
+        .order('created_at', {
+          ascending: false,
+        })
+        .limit(10)
 
-        if (participationsData) {
-          setTotalDelegates(
-            participationsData.length
-          )
-        }
+      if (eventsError) {
+        console.error(
+          'Erro ao carregar eventos:',
+          eventsError
+        )
+      }
+
+      if (eventsData) {
+        setEvents(
+          eventsData as unknown as Event[]
+        )
       }
     }
 
@@ -173,9 +249,12 @@ function Dashboard() {
   return (
     <main className="dashboard">
 
-      {/* CABEÇALHO */}
+      {/* =====================================================
+          CABEÇALHO
+          ===================================================== */}
 
       <header className="dashboard-header">
+
         <div>
 
           <div className="live-status">
@@ -198,17 +277,23 @@ function Dashboard() {
         </div>
 
         <div className="session-indicator">
-          <span>SESSÃO</span>
+
+          <span>
+            SESSÃO
+          </span>
 
           <strong>
             {sessionDisplay}
           </strong>
+
         </div>
 
       </header>
 
 
-      {/* ESTATÍSTICAS */}
+      {/* =====================================================
+          ESTATÍSTICAS
+          ===================================================== */}
 
       <section className="stats-grid">
 
@@ -240,7 +325,9 @@ function Dashboard() {
       </section>
 
 
-      {/* CONTEÚDO PRINCIPAL */}
+      {/* =====================================================
+          CONTEÚDO PRINCIPAL
+          ===================================================== */}
 
       <section className="main-grid">
 
@@ -251,11 +338,14 @@ function Dashboard() {
       </section>
 
 
-      {/* EVENTOS */}
+      {/* =====================================================
+          EVENTOS
+          ===================================================== */}
 
       <section className="events-card">
 
         <div className="section-header">
+
           <div>
 
             <span className="section-label">
@@ -267,33 +357,60 @@ function Dashboard() {
             </h2>
 
           </div>
+
         </div>
 
         <div className="event-list">
 
-          <div className="event">
-            <span>17:42</span>
+          {events.length === 0 && (
+            <div className="event">
 
-            <p>
-              Delegado A respondeu à crise.
-            </p>
-          </div>
+              <p>
+                Nenhum evento público registrado ainda.
+              </p>
 
-          <div className="event">
-            <span>17:40</span>
+            </div>
+          )}
 
-            <p>
-              Delegado C enviou uma nova ordem.
-            </p>
-          </div>
+          {events.map((event) => {
 
-          <div className="event">
-            <span>17:38</span>
+            const eventTime =
+              new Date(
+                event.created_at
+              ).toLocaleTimeString(
+                'pt-BR',
+                {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                }
+              )
 
-            <p>
-              Delegado B iniciou uma negociação.
-            </p>
-          </div>
+            return (
+              <div
+                className="event"
+                key={event.id}
+              >
+
+                <span>
+                  {eventTime}
+                </span>
+
+                <p>
+
+                  {event.participation?.delegate && (
+                    <strong>
+                      {event.participation.delegate.name}
+                      {' — '}
+                    </strong>
+                  )}
+
+                  {event.title}
+
+                </p>
+
+              </div>
+            )
+          })}
 
         </div>
 
