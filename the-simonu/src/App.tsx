@@ -1,7 +1,7 @@
-import Dashboard from './pages/Dashboard'
+import BoardEvaluation from './pages/BoardEvaluation'
 
 function App() {
-  return <Dashboard />
+  return <BoardEvaluation />
 }
 
 export default App
