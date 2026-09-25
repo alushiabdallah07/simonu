@@ -3,6 +3,14 @@ import { Minus, Trophy } from 'lucide-react'
 
 import { supabase } from '../lib/supabase'
 
+type RankingScope =
+  | 'session'
+  | 'committee'
+
+interface RankingProps {
+  scope: RankingScope
+}
+
 interface RankingDelegate {
   position: number
   name: string
@@ -25,6 +33,7 @@ interface Evaluation {
   score: number
   participation_id: string
   evaluation_category_id: string
+  session_id: string
 }
 
 interface EvaluationCategory {
@@ -33,7 +42,10 @@ interface EvaluationCategory {
   max_score: number
 }
 
-function Ranking() {
+function Ranking({
+  scope,
+}: RankingProps) {
+
   const [delegates, setDelegates] =
     useState<RankingDelegate[]>([])
 
@@ -41,7 +53,9 @@ function Ranking() {
     useState(true)
 
   async function loadRanking() {
+
     try {
+
       setLoading(true)
 
       /*
@@ -61,55 +75,73 @@ function Ranking() {
         .single()
 
       if (committeeError) {
+
         console.error(
           'Erro ao buscar comitê:',
           committeeError
         )
 
         setDelegates([])
+
         return
       }
 
       /*
        * 2. Buscar a sessão atual
+       *
+       * Só precisamos dela quando
+       * o ranking for da sessão.
        */
 
-      const {
-        data: session,
-        error: sessionError,
-      } = await supabase
-        .from('sessions')
-        .select('id')
-        .eq(
-          'committee_id',
-          committee.id
-        )
-        .eq(
-          'status',
-          'LIVE'
-        )
-        .order(
-          'number',
-          {
-            ascending: false,
-          }
-        )
-        .limit(1)
-        .maybeSingle()
+      let currentSessionId:
+        string | null = null
 
-      if (sessionError) {
-        console.error(
-          'Erro ao buscar sessão:',
-          sessionError
-        )
+      if (scope === 'session') {
 
-        setDelegates([])
-        return
-      }
+        const {
+          data: session,
+          error: sessionError,
+        } = await supabase
+          .from('sessions')
+          .select('id')
+          .eq(
+            'committee_id',
+            committee.id
+          )
+          .eq(
+            'status',
+            'LIVE'
+          )
+          .order(
+            'number',
+            {
+              ascending: false,
+            }
+          )
+          .limit(1)
+          .maybeSingle()
 
-      if (!session) {
-        setDelegates([])
-        return
+        if (sessionError) {
+
+          console.error(
+            'Erro ao buscar sessão:',
+            sessionError
+          )
+
+          setDelegates([])
+
+          return
+        }
+
+        if (!session) {
+
+          setDelegates([])
+
+          return
+        }
+
+        currentSessionId =
+          session.id
       }
 
       /*
@@ -134,12 +166,14 @@ function Ranking() {
         )
 
       if (participationError) {
+
         console.error(
           'Erro ao buscar participantes:',
           participationError
         )
 
         setDelegates([])
+
         return
       }
 
@@ -147,12 +181,14 @@ function Ranking() {
         !participations ||
         participations.length === 0
       ) {
+
         setDelegates([])
+
         return
       }
 
       /*
-       * 4. Buscar avaliações da sessão atual
+       * 4. Buscar avaliações
        */
 
       const participationIds =
@@ -161,30 +197,56 @@ function Ranking() {
             participation.id
         )
 
+      let evaluationsQuery =
+        supabase
+          .from('evaluations')
+          .select(
+            `
+              score,
+              participation_id,
+              evaluation_category_id,
+              session_id
+            `
+          )
+          .in(
+            'participation_id',
+            participationIds
+          )
+
+      /*
+       * Ranking da sessão:
+       *
+       * somente avaliações
+       * da sessão atual.
+       */
+
+      if (
+        scope === 'session' &&
+        currentSessionId
+      ) {
+
+        evaluationsQuery =
+          evaluationsQuery.eq(
+            'session_id',
+            currentSessionId
+          )
+      }
+
       const {
         data: evaluations,
         error: evaluationError,
-      } = await supabase
-        .from('evaluations')
-        .select(
-          'score, participation_id, evaluation_category_id'
-        )
-        .in(
-          'participation_id',
-          participationIds
-        )
-        .eq(
-          'session_id',
-          session.id
-        )
+      } =
+        await evaluationsQuery
 
       if (evaluationError) {
+
         console.error(
           'Erro ao buscar avaliações:',
           evaluationError
         )
 
         setDelegates([])
+
         return
       }
 
@@ -192,7 +254,9 @@ function Ranking() {
         !evaluations ||
         evaluations.length === 0
       ) {
+
         setDelegates([])
+
         return
       }
 
@@ -223,17 +287,19 @@ function Ranking() {
         )
 
       if (categoryError) {
+
         console.error(
           'Erro ao buscar categorias:',
           categoryError
         )
 
         setDelegates([])
+
         return
       }
 
       /*
-       * 6. Buscar nomes dos delegados
+       * 6. Buscar delegados
        */
 
       const delegateIds = [
@@ -259,12 +325,14 @@ function Ranking() {
         )
 
       if (delegateError) {
+
         console.error(
           'Erro ao buscar delegados:',
           delegateError
         )
 
         setDelegates([])
+
         return
       }
 
@@ -280,10 +348,12 @@ function Ranking() {
 
       participations.forEach(
         (participation) => {
+
           participationMap.set(
             participation.id,
             participation
           )
+
         }
       )
 
@@ -295,10 +365,12 @@ function Ranking() {
 
       delegatesData?.forEach(
         (delegate) => {
+
           delegateMap.set(
             delegate.id,
             delegate
           )
+
         }
       )
 
@@ -310,15 +382,17 @@ function Ranking() {
 
       categories?.forEach(
         (category) => {
+
           categoryMap.set(
             category.id,
             category
           )
+
         }
       )
 
       /*
-       * 8. Calcular a pontuação
+       * 8. Calcular pontuação
        */
 
       const scoreMap =
@@ -379,9 +453,7 @@ function Ranking() {
           }
 
           /*
-           * Nota normalizada:
-           *
-           * 9 / 10 × 100 = 90
+           * Converte a nota para 0-100.
            */
 
           const normalizedScore =
@@ -391,9 +463,7 @@ function Ranking() {
             ) * 100
 
           /*
-           * Nota ponderada:
-           *
-           * 90 × 40% = 36
+           * Aplica o peso.
            */
 
           const weightedScore =
@@ -406,9 +476,12 @@ function Ranking() {
             )
 
           if (current) {
+
             current.score +=
               weightedScore
+
           } else {
+
             scoreMap.set(
               participation.id,
               {
@@ -424,12 +497,14 @@ function Ranking() {
                   weightedScore,
               }
             )
+
           }
+
         }
       )
 
       /*
-       * 9. Ordenar o ranking
+       * 9. Ordenar ranking
        */
 
       const ranking =
@@ -458,24 +533,27 @@ function Ranking() {
       )
 
     } catch (error) {
+
       console.error(
         'Erro inesperado no ranking:',
         error
       )
 
       setDelegates([])
+
     } finally {
+
       setLoading(false)
+
     }
   }
 
   /*
-   * Carrega o ranking quando a página abre.
-   *
-   * Atualiza automaticamente a cada 60 segundos.
+   * Carrega o ranking.
    */
 
   useEffect(() => {
+
     loadRanking()
 
     const interval =
@@ -485,9 +563,19 @@ function Ranking() {
       )
 
     return () => {
-      clearInterval(interval)
+
+      clearInterval(
+        interval
+      )
+
     }
-  }, [])
+
+  }, [scope])
+
+  const title =
+    scope === 'session'
+      ? 'Ranking da sessão'
+      : 'Ranking do comitê'
 
   return (
     <section className="ranking-card">
@@ -501,7 +589,7 @@ function Ranking() {
           </span>
 
           <h2>
-            Ranking ao vivo
+            {title}
           </h2>
 
         </div>
@@ -528,6 +616,7 @@ function Ranking() {
         {!loading &&
           delegates.map(
             (delegate) => (
+
               <div
                 className="ranking-row"
                 key={`${delegate.name}-${delegate.representation}`}
@@ -562,6 +651,7 @@ function Ranking() {
                 </div>
 
               </div>
+
             )
           )}
 

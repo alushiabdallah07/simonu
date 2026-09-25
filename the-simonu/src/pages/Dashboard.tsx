@@ -430,7 +430,7 @@ function Dashboard() {
 
       <section className="main-grid">
 
-        <Ranking />
+        <Ranking scope="session" />
 
         <HighlightCard />
 

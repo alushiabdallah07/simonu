@@ -1,12 +1,22 @@
 import { useEffect, useState } from 'react'
-import { Save } from 'lucide-react'
+import { Check, ChevronDown, Save } from 'lucide-react'
 
 import { supabase } from '../lib/supabase'
 
-interface Delegate {
-  participationId: string
+interface Committee {
+  id: string
   name: string
+}
+
+interface Participation {
+  id: string
   representation: string
+  delegate_id: string
+}
+
+interface Delegate {
+  id: string
+  name: string
 }
 
 interface EvaluationCategory {
@@ -18,33 +28,40 @@ interface EvaluationCategory {
   display_order: number
 }
 
-interface ExistingEvaluation {
+interface EvaluationRound {
   id: string
-  participation_id: string
-  evaluation_category_id: string
   session_id: string
-  score: number
-  feedback: string | null
+  name: string
+}
+
+interface ScoreState {
+  [categoryId: string]: string
 }
 
 function BoardEvaluation() {
+  const [committee, setCommittee] =
+    useState<Committee | null>(null)
+
+  const [participations, setParticipations] =
+    useState<Participation[]>([])
+
   const [delegates, setDelegates] =
     useState<Delegate[]>([])
 
   const [categories, setCategories] =
     useState<EvaluationCategory[]>([])
 
-  const [selectedDelegate, setSelectedDelegate] =
+  const [currentRound, setCurrentRound] =
+    useState<EvaluationRound | null>(null)
+
+  const [selectedParticipationId, setSelectedParticipationId] =
     useState('')
 
   const [scores, setScores] =
-    useState<Record<string, string>>({})
+    useState<ScoreState>({})
 
   const [loading, setLoading] =
     useState(true)
-
-  const [loadingScores, setLoadingScores] =
-    useState(false)
 
   const [saving, setSaving] =
     useState(false)
@@ -52,294 +69,280 @@ function BoardEvaluation() {
   const [message, setMessage] =
     useState('')
 
-  /*
-   * Carrega os delegados e as categorias
-   */
   useEffect(() => {
     async function loadData() {
-      setLoading(true)
+      try {
+        setLoading(true)
 
-      /*
-       * 1. Buscar o comitê
-       */
+        /*
+         * 1. Buscar o comitê
+         */
 
-      const {
-        data: committeeData,
-        error: committeeError,
-      } = await supabase
-        .from('committees')
-        .select('id')
-        .eq(
-          'name',
-          'Invasão Americana no Irã'
-        )
-        .single()
-
-      if (committeeError) {
-        console.error(
-          'Erro ao carregar comitê:',
-          committeeError
-        )
-
-        setLoading(false)
-        return
-      }
-
-      /*
-       * 2. Buscar delegados
-       */
-
-      const {
-        data: participationData,
-        error: participationError,
-      } = await supabase
-        .from('participations')
-        .select(`
-          id,
-          representation,
-          delegate:delegate_id (
-            name
+        const {
+          data: committeeData,
+          error: committeeError,
+        } = await supabase
+          .from('committees')
+          .select('id, name')
+          .eq(
+            'name',
+            'Invasão Americana no Irã'
           )
-        `)
-        .eq(
-          'committee_id',
-          committeeData.id
-        )
-        .eq(
-          'status',
-          'ACTIVE'
-        )
+          .single()
 
-      if (participationError) {
-        console.error(
-          'Erro ao carregar delegados:',
-          participationError
-        )
-      }
-
-      if (participationData) {
-        const formattedDelegates =
-          participationData.map(
-            (participation: any) => ({
-              participationId:
-                participation.id,
-
-              name:
-                participation.delegate?.name ??
-                'Delegado',
-
-              representation:
-                participation.representation,
-            })
+        if (committeeError) {
+          console.error(
+            'Erro ao carregar comitê:',
+            committeeError
           )
 
-        setDelegates(
-          formattedDelegates
-        )
-      }
+          return
+        }
 
-      /*
-       * 3. Buscar categorias
-       */
+        setCommittee(committeeData)
 
-      const {
-        data: categoryData,
-        error: categoryError,
-      } = await supabase
-        .from('evaluation_categories')
-        .select(`
-          id,
-          name,
-          description,
-          weight,
-          max_score,
-          display_order
-        `)
-        .eq(
-          'committee_id',
-          committeeData.id
+        /*
+         * 2. Buscar participantes
+         */
+
+        const {
+          data: participationData,
+          error: participationError,
+        } = await supabase
+          .from('participations')
+          .select(
+            'id, representation, delegate_id'
+          )
+          .eq(
+            'committee_id',
+            committeeData.id
+          )
+          .eq(
+            'status',
+            'ACTIVE'
+          )
+
+        if (participationError) {
+          console.error(
+            'Erro ao carregar participantes:',
+            participationError
+          )
+
+          return
+        }
+
+        setParticipations(
+          participationData ?? []
         )
-        .order(
-          'display_order',
-          {
-            ascending: true,
+
+        /*
+         * 3. Buscar delegados
+         */
+
+        const delegateIds =
+          (participationData ?? []).map(
+            (participation) =>
+              participation.delegate_id
+          )
+
+        if (delegateIds.length > 0) {
+          const {
+            data: delegateData,
+            error: delegateError,
+          } = await supabase
+            .from('delegates')
+            .select('id, name')
+            .in(
+              'id',
+              delegateIds
+            )
+
+          if (delegateError) {
+            console.error(
+              'Erro ao carregar delegados:',
+              delegateError
+            )
+
+            return
           }
-        )
 
-      if (categoryError) {
-        console.error(
-          'Erro ao carregar categorias:',
-          categoryError
-        )
-      }
+          setDelegates(
+            delegateData ?? []
+          )
+        }
 
-      if (categoryData) {
+        /*
+         * 4. Buscar categorias do comitê
+         *
+         * As categorias continuam dinâmicas.
+         */
+
+        const {
+          data: categoryData,
+          error: categoryError,
+        } = await supabase
+          .from('evaluation_categories')
+          .select(
+            `
+              id,
+              name,
+              description,
+              weight,
+              max_score,
+              display_order
+            `
+          )
+          .eq(
+            'committee_id',
+            committeeData.id
+          )
+          .order(
+            'display_order',
+            {
+              ascending: true,
+            }
+          )
+
+        if (categoryError) {
+          console.error(
+            'Erro ao carregar categorias:',
+            categoryError
+          )
+
+          return
+        }
+
         setCategories(
-          categoryData
+          categoryData ?? []
         )
-      }
 
-      setLoading(false)
+        /*
+         * 5. Buscar a sessão atual
+         */
+
+        const {
+          data: sessionData,
+          error: sessionError,
+        } = await supabase
+          .from('sessions')
+          .select('id, number')
+          .eq(
+            'committee_id',
+            committeeData.id
+          )
+          .eq(
+            'status',
+            'LIVE'
+          )
+          .order(
+            'number',
+            {
+              ascending: false,
+            }
+          )
+          .limit(1)
+          .maybeSingle()
+
+        if (sessionError) {
+          console.error(
+            'Erro ao carregar sessão:',
+            sessionError
+          )
+
+          return
+        }
+
+        if (!sessionData) {
+          setMessage(
+            'Nenhuma sessão ao vivo encontrada.'
+          )
+
+          return
+        }
+
+        /*
+         * 6. Buscar a rodada atual
+         */
+
+        const {
+          data: roundData,
+          error: roundError,
+        } = await supabase
+          .from('evaluation_rounds')
+          .select(
+            'id, session_id, name'
+          )
+          .eq(
+            'session_id',
+            sessionData.id
+          )
+          .order(
+            'created_at',
+            {
+              ascending: false,
+            }
+          )
+          .limit(1)
+          .maybeSingle()
+
+        if (roundError) {
+          console.error(
+            'Erro ao carregar rodada:',
+            roundError
+          )
+
+          return
+        }
+
+        if (!roundData) {
+          setMessage(
+            'Nenhuma rodada de avaliação encontrada.'
+          )
+
+          return
+        }
+
+        setCurrentRound(
+          roundData
+        )
+
+      } catch (error) {
+        console.error(
+          'Erro inesperado ao carregar avaliação:',
+          error
+        )
+      } finally {
+        setLoading(false)
+      }
     }
 
     loadData()
   }, [])
 
   /*
-   * Busca a sessão atualmente ao vivo.
-   */
-  async function getCurrentSession() {
-    const {
-      data,
-      error,
-    } = await supabase
-      .from('sessions')
-      .select('id')
-      .eq(
-        'status',
-        'LIVE'
-      )
-      .order(
-        'number',
-        {
-          ascending: false,
-        }
-      )
-      .limit(1)
-      .maybeSingle()
-
-    if (error) {
-      console.error(
-        'Erro ao buscar sessão:',
-        error
-      )
-
-      return null
-    }
-
-    return data
-  }
-
-  /*
    * Quando a Mesa seleciona um delegado,
-   * busca as avaliações que já existem
-   * para ele na sessão atual.
+   * começamos uma avaliação nova.
+   *
+   * Não carregamos notas antigas para
+   * dentro da nova avaliação.
    */
-  async function loadExistingScores(
+
+  function handleParticipationChange(
     participationId: string
   ) {
-    setLoadingScores(true)
+    setSelectedParticipationId(
+      participationId
+    )
+
+    setScores({})
+
     setMessage('')
-
-    /*
-     * Primeiro encontramos a sessão atual.
-     */
-
-    const session =
-      await getCurrentSession()
-
-    if (!session) {
-      setScores({})
-      setMessage(
-        'Nenhuma sessão ao vivo encontrada.'
-      )
-
-      setLoadingScores(false)
-      return
-    }
-
-    /*
-     * Busca avaliações existentes
-     * desse delegado nessa sessão.
-     */
-
-    const {
-      data: evaluationData,
-      error: evaluationError,
-    } = await supabase
-      .from('evaluations')
-      .select(`
-        id,
-        participation_id,
-        evaluation_category_id,
-        session_id,
-        score,
-        feedback
-      `)
-      .eq(
-        'participation_id',
-        participationId
-      )
-      .eq(
-        'session_id',
-        session.id
-      )
-
-    if (evaluationError) {
-      console.error(
-        'Erro ao carregar avaliações existentes:',
-        evaluationError
-      )
-
-      setScores({})
-      setMessage(
-        'Não foi possível carregar as notas existentes.'
-      )
-
-      setLoadingScores(false)
-      return
-    }
-
-    /*
-     * Transforma as avaliações em:
-     *
-     * {
-     *   categoriaId: "nota"
-     * }
-     */
-
-    const loadedScores:
-      Record<string, string> = {}
-
-    evaluationData?.forEach(
-      (
-        evaluation: ExistingEvaluation
-      ) => {
-        loadedScores[
-          evaluation.evaluation_category_id
-        ] =
-          String(
-            evaluation.score
-          )
-      }
-    )
-
-    setScores(
-      loadedScores
-    )
-
-    setLoadingScores(false)
   }
 
   /*
-   * Seleciona um delegado e carrega
-   * automaticamente suas notas.
+   * Atualiza a nota de uma categoria.
    */
-  async function handleSelectDelegate(
-    participationId: string
-  ) {
-    setSelectedDelegate(
-      participationId
-    )
 
-    await loadExistingScores(
-      participationId
-    )
-  }
-
-  /*
-   * Altera uma nota.
-   */
   function handleScoreChange(
     categoryId: string,
     value: string
@@ -347,8 +350,7 @@ function BoardEvaluation() {
     setScores(
       (current) => ({
         ...current,
-        [categoryId]:
-          value,
+        [categoryId]: value,
       })
     )
 
@@ -356,591 +358,388 @@ function BoardEvaluation() {
   }
 
   /*
-   * Salva as avaliações.
-   *
-   * Se a avaliação já existir:
-   * UPDATE
-   *
-   * Se ainda não existir:
-   * INSERT
+   * Salvar avaliação
    */
+
   async function handleSave() {
     setMessage('')
 
-    if (!selectedDelegate) {
+    if (!selectedParticipationId) {
       setMessage(
-        'Selecione um delegado antes de salvar.'
+        'Selecione um delegado.'
+      )
+
+      return
+    }
+
+    if (!currentRound) {
+      setMessage(
+        'Nenhuma rodada de avaliação está disponível.'
       )
 
       return
     }
 
     /*
-     * Verifica se todas as categorias
-     * possuem uma nota.
+     * Verificar se todas as categorias
+     * receberam uma nota.
      */
 
-    const missingCategory =
-      categories.some(
-        (category) =>
-          scores[
-            category.id
-          ] === undefined ||
-          scores[
-            category.id
-          ] === ''
-      )
-
-    if (missingCategory) {
-      setMessage(
-        'Preencha todas as notas antes de salvar.'
-      )
-
-      return
-    }
-
-    /*
-     * Valida os limites das notas.
-     */
-
-    const invalidScore =
-      categories.some(
-        (category) => {
-          const score =
-            Number(
-              scores[
-                category.id
-              ]
-            )
-
-          return (
-            Number.isNaN(
-              score
-            ) ||
-            score < 0 ||
-            score >
-              Number(
-                category.max_score
-              )
-          )
-        }
-      )
-
-    if (invalidScore) {
-      setMessage(
-        'Existe uma nota fora do limite permitido.'
-      )
-
-      return
-    }
-
-    setSaving(true)
-
-    /*
-     * Busca a sessão atual.
-     */
-
-    const session =
-      await getCurrentSession()
-
-    if (!session) {
-      setMessage(
-        'Nenhuma sessão ao vivo encontrada.'
-      )
-
-      setSaving(false)
-      return
-    }
-
-    /*
-     * Busca avaliações que já existem
-     * para esse delegado nessa sessão.
-     */
-
-    const {
-      data: existingEvaluations,
-      error: existingError,
-    } = await supabase
-      .from('evaluations')
-      .select(`
-        id,
-        evaluation_category_id
-      `)
-      .eq(
-        'participation_id',
-        selectedDelegate
-      )
-      .eq(
-        'session_id',
-        session.id
-      )
-
-    if (existingError) {
-      console.error(
-        'Erro ao buscar avaliações existentes:',
-        existingError
-      )
-
-      setMessage(
-        'Não foi possível verificar as avaliações existentes.'
-      )
-
-      setSaving(false)
-      return
-    }
-
-    /*
-     * Salva cada categoria individualmente.
-     */
-
-    for (
-      const category
-      of categories
-    ) {
-      const score =
-        Number(
-          scores[
-            category.id
-          ]
-        )
-
-      const existingEvaluation =
-        existingEvaluations?.find(
-          (evaluation) =>
-            evaluation.evaluation_category_id ===
-            category.id
-        )
-
-      /*
-       * Se já existe:
-       * atualiza.
-       */
+    for (const category of categories) {
+      const value =
+        scores[category.id]
 
       if (
-        existingEvaluation
+        value === undefined ||
+        value === ''
       ) {
-        const {
-          error: updateError,
-        } = await supabase
-          .from('evaluations')
-          .update({
-            score,
-          })
-          .eq(
-            'id',
-            existingEvaluation.id
-          )
+        setMessage(
+          `Informe uma nota para "${category.name}".`
+        )
 
-        if (updateError) {
-          console.error(
-            'Erro ao atualizar avaliação:',
-            updateError
-          )
-
-          setMessage(
-            `Erro ao atualizar a nota de ${category.name}.`
-          )
-
-          setSaving(false)
-          return
-        }
+        return
       }
 
+      const numericValue =
+        Number(value)
+
+      if (
+        Number.isNaN(numericValue)
+      ) {
+        setMessage(
+          `A nota de "${category.name}" é inválida.`
+        )
+
+        return
+      }
+
+      if (
+        numericValue < 0 ||
+        numericValue > category.max_score
+      ) {
+        setMessage(
+          `A nota de "${category.name}" deve estar entre 0 e ${category.max_score}.`
+        )
+
+        return
+      }
+    }
+
+    try {
+      setSaving(true)
+
       /*
-       * Se não existe:
-       * cria.
+       * Criamos NOVAS avaliações.
+       *
+       * Não fazemos UPDATE.
+       *
+       * Isso preserva o histórico.
        */
 
-      else {
-        const {
-          error: insertError,
-        } = await supabase
-          .from('evaluations')
-          .insert({
+      const evaluationRows =
+        categories.map(
+          (category) => ({
             participation_id:
-              selectedDelegate,
+              selectedParticipationId,
 
             evaluation_category_id:
               category.id,
 
             session_id:
-              session.id,
+              currentRound.session_id,
 
-            score,
+            evaluation_round_id:
+              currentRound.id,
+
+            score:
+              Number(
+                scores[category.id]
+              ),
 
             feedback:
               null,
           })
+        )
 
-        if (insertError) {
-          console.error(
-            'Erro ao inserir avaliação:',
-            insertError
-          )
+      const {
+        error,
+      } = await supabase
+        .from('evaluations')
+        .insert(
+          evaluationRows
+        )
 
-          setMessage(
-            `Erro ao salvar a nota de ${category.name}.`
-          )
+      if (error) {
+        console.error(
+          'Erro ao salvar avaliação:',
+          error
+        )
 
-          setSaving(false)
-          return
-        }
+        setMessage(
+          `Erro ao salvar avaliação: ${error.message}`
+        )
+
+        return
       }
+
+      /*
+       * Limpa o formulário para que
+       * a Mesa possa avaliar outro delegado.
+       */
+
+      setScores({})
+
+      setMessage(
+        'Avaliação registrada com sucesso.'
+      )
+
+    } catch (error) {
+      console.error(
+        'Erro inesperado ao salvar avaliação:',
+        error
+      )
+
+      setMessage(
+        'Ocorreu um erro ao salvar a avaliação.'
+      )
+    } finally {
+      setSaving(false)
     }
-
-    /*
-     * Recarrega as notas do banco
-     * depois de salvar.
-     */
-
-    await loadExistingScores(
-      selectedDelegate
-    )
-
-    setMessage(
-      'Avaliação salva com sucesso.'
-    )
-
-    setSaving(false)
   }
+
+  const selectedParticipation =
+    participations.find(
+      (participation) =>
+        participation.id ===
+        selectedParticipationId
+    )
+
+  const selectedDelegate =
+    delegates.find(
+      (delegate) =>
+        delegate.id ===
+        selectedParticipation?.delegate_id
+    )
 
   if (loading) {
     return (
-      <main className="dashboard">
-
-        <div className="section-header">
-
-          <div>
-
-            <span className="section-label">
-              MESA DIRETORA
-            </span>
-
-            <h1>
-              Avaliação
-            </h1>
-
-          </div>
-
-        </div>
-
+      <main className="board-evaluation">
         <p>
-          Carregando dados...
+          Carregando avaliação...
         </p>
-
       </main>
     )
   }
 
-  const selectedDelegateData =
-    delegates.find(
-      (delegate) =>
-        delegate.participationId ===
-        selectedDelegate
-    )
-
   return (
-    <main className="dashboard">
+    <main className="board-evaluation">
 
-      <header className="dashboard-header">
+      <header className="board-evaluation-header">
 
         <div>
 
-          <div className="live-status">
-
-            <span className="live-dot" />
-
+          <span className="section-label">
             MESA DIRETORA
-
-          </div>
+          </span>
 
           <h1>
             Avaliação dos delegados
           </h1>
 
           <p>
-            Invasão Americana no Irã
+            {committee?.name}
           </p>
+
+        </div>
+
+        <div className="evaluation-round">
+
+          <span>
+            RODADA
+          </span>
+
+          <strong>
+            {currentRound?.name ?? '—'}
+          </strong>
 
         </div>
 
       </header>
 
-      <section className="main-grid">
+      <section className="evaluation-panel">
 
-        <section className="ranking-card">
+        <div className="evaluation-select">
 
-          <div className="section-header">
+          <label>
+            Delegado
+          </label>
 
-            <div>
+          <div className="select-wrapper">
 
-              <span className="section-label">
-                DELEGADO
-              </span>
-
-              <h2>
-                Selecionar participante
-              </h2>
-
-            </div>
-
-          </div>
-
-          <div className="ranking-list">
-
-            {delegates.map(
-              (delegate) => {
-
-                const selected =
-                  selectedDelegate ===
-                  delegate.participationId
-
-                return (
-                  <button
-                    key={
-                      delegate.participationId
-                    }
-                    type="button"
-                    className="ranking-row"
-                    onClick={() =>
-                      handleSelectDelegate(
-                        delegate.participationId
-                      )
-                    }
-                    style={{
-                      width: '100%',
-                      textAlign: 'left',
-                      cursor: 'pointer',
-                    }}
-                  >
-
-                    <span className="ranking-position">
-                      {selected
-                        ? '✓'
-                        : ''}
-                    </span>
-
-                    <div className="delegate-info">
-
-                      <strong>
-                        {delegate.name}
-                      </strong>
-
-                      <span>
-                        {delegate.representation}
-                      </span>
-
-                    </div>
-
-                  </button>
+            <select
+              value={
+                selectedParticipationId
+              }
+              onChange={(event) =>
+                handleParticipationChange(
+                  event.target.value
                 )
               }
-            )}
+            >
+
+              <option value="">
+                Selecione um delegado
+              </option>
+
+              {participations.map(
+                (participation) => {
+
+                  const delegate =
+                    delegates.find(
+                      (item) =>
+                        item.id ===
+                        participation.delegate_id
+                    )
+
+                  return (
+                    <option
+                      key={
+                        participation.id
+                      }
+                      value={
+                        participation.id
+                      }
+                    >
+                      {delegate?.name ??
+                        'Delegado'}
+                      {' — '}
+                      {participation.representation}
+                    </option>
+                  )
+                }
+              )}
+
+            </select>
+
+            <ChevronDown
+              size={18}
+            />
 
           </div>
 
-        </section>
+        </div>
 
-        <section className="highlight-card">
+        {selectedParticipationId && (
+          <div className="selected-delegate">
 
-          <div className="highlight-header">
+            <strong>
+              {selectedDelegate?.name}
+            </strong>
 
             <span>
-              AVALIAÇÃO
+              {selectedParticipation?.representation}
             </span>
 
-            {selectedDelegate && (
-              <span className="live-badge">
-                SELECIONADO
-              </span>
-            )}
-
           </div>
+        )}
 
-          <div className="highlight-content">
+        <div className="evaluation-categories">
 
-            {!selectedDelegate && (
-              <>
-                <span className="highlight-label">
-                  AGUARDANDO
-                </span>
+          {categories.map(
+            (category) => (
 
-                <h2>
-                  Selecione um delegado
-                </h2>
+              <div
+                className="evaluation-category"
+                key={category.id}
+              >
 
-                <p>
-                  Escolha um participante para
-                  registrar ou editar sua avaliação.
-                </p>
-              </>
-            )}
+                <div className="evaluation-category-info">
 
-            {selectedDelegate && (
-              <>
-                <span className="highlight-label">
-                  NOTAS DA MESA
-                </span>
+                  <div>
 
-                <h2>
-                  {selectedDelegateData?.name}
-                </h2>
+                    <strong>
+                      {category.name}
+                    </strong>
 
-                <p>
-                  {selectedDelegateData?.representation}
-                </p>
-
-                {loadingScores ? (
-                  <p>
-                    Carregando notas...
-                  </p>
-                ) : (
-                  <div
-                    style={{
-                      display: 'flex',
-                      flexDirection: 'column',
-                      gap: '18px',
-                      marginTop: '24px',
-                    }}
-                  >
-
-                    {categories.map(
-                      (category) => (
-                        <div
-                          key={
-                            category.id
-                          }
-                        >
-
-                          <div
-                            style={{
-                              display: 'flex',
-                              justifyContent:
-                                'space-between',
-                              marginBottom:
-                                '8px',
-                            }}
-                          >
-
-                            <strong>
-                              {category.name}
-                            </strong>
-
-                            <span>
-                              Peso: {category.weight}%
-                            </span>
-
-                          </div>
-
-                          <input
-                            type="number"
-                            min="0"
-                            max={
-                              category.max_score
-                            }
-                            step="0.1"
-                            value={
-                              scores[
-                                category.id
-                              ] ?? ''
-                            }
-                            onChange={(
-                              event
-                            ) =>
-                              handleScoreChange(
-                                category.id,
-                                event.target.value
-                              )
-                            }
-                            placeholder={`0 - ${category.max_score}`}
-                            style={{
-                              width: '100%',
-                              padding:
-                                '12px',
-                              borderRadius:
-                                '8px',
-                              border:
-                                '1px solid currentColor',
-                              background:
-                                'transparent',
-                              color:
-                                'inherit',
-                              fontSize:
-                                '16px',
-                            }}
-                          />
-
-                          {category.description && (
-                            <small>
-                              {
-                                category.description
-                              }
-                            </small>
-                          )}
-
-                        </div>
-                      )
-                    )}
-
-                    <button
-                      type="button"
-                      onClick={
-                        handleSave
-                      }
-                      disabled={
-                        saving ||
-                        loadingScores
-                      }
-                      style={{
-                        display:
-                          'flex',
-                        alignItems:
-                          'center',
-                        justifyContent:
-                          'center',
-                        gap: '8px',
-                        padding:
-                          '14px',
-                        border:
-                          'none',
-                        borderRadius:
-                          '8px',
-                        cursor:
-                          saving
-                            ? 'not-allowed'
-                            : 'pointer',
-                      }}
-                    >
-
-                      {saving ? (
-                        'Salvando...'
-                      ) : (
-                        <>
-                          <Save
-                            size={18}
-                          />
-
-                          Salvar avaliação
-                        </>
-                      )}
-
-                    </button>
-
-                    {message && (
+                    {category.description && (
                       <p>
-                        {message}
+                        {category.description}
                       </p>
                     )}
 
                   </div>
-                )}
 
-              </>
-            )}
+                  <span>
+                    Peso: {category.weight}%
+                  </span>
 
+                </div>
+
+                <div className="score-input">
+
+                  <input
+                    type="number"
+                    min="0"
+                    max={
+                      category.max_score
+                    }
+                    step="0.1"
+                    placeholder="0"
+                    value={
+                      scores[
+                        category.id
+                      ] ?? ''
+                    }
+                    onChange={(event) =>
+                      handleScoreChange(
+                        category.id,
+                        event.target.value
+                      )
+                    }
+                  />
+
+                  <span>
+                    / {category.max_score}
+                  </span>
+
+                </div>
+
+              </div>
+
+            )
+          )}
+
+        </div>
+
+        {message && (
+          <div className="evaluation-message">
+            {message}
           </div>
+        )}
 
-        </section>
+        <button
+          type="button"
+          className="save-evaluation"
+          onClick={handleSave}
+          disabled={
+            saving ||
+            !selectedParticipationId ||
+            !currentRound
+          }
+        >
+
+          {saving ? (
+            <>
+              Salvando...
+            </>
+          ) : (
+            <>
+              <Save size={18} />
+              Registrar avaliação
+            </>
+          )}
+
+        </button>
 
       </section>
 
